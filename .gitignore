@@ -1,0 +1,39 @@
+# Binaries
+bin/
+dist/
+reviewbridge
+
+# Go
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Environment & secrets
+.env
+.env.local
+*.env
+
+# Config with real credentials (template is committed, actual config is not)
+~/.reviewbridge/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log

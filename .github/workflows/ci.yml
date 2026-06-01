@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.3"
+      - run: go test ./... -race -timeout 60s
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.3"
+      - name: Start WireMock servers
+        run: docker compose -f docker-compose.test.yml up -d
+      - name: Wait for health checks
+        run: |
+          until curl -sf http://localhost:8080/__admin/health; do sleep 1; done
+          until curl -sf http://localhost:8081/__admin/health; do sleep 1; done
+      - name: Run integration tests
+        run: |
+          REVIEWBRIDGE_GITHUB_BASE_URL=http://localhost:8080 \
+          REVIEWBRIDGE_GITLAB_BASE_URL=http://localhost:8081 \
+          go test ./tests/integration/... -v -timeout 120s
+      - name: Stop WireMock servers
+        if: always()
+        run: docker compose -f docker-compose.test.yml down
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release binaries
+        run: make release
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

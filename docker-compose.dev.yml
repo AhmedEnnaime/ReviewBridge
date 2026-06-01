@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/workspace
+      - ~/.reviewbridge:/root/.reviewbridge
+      - ~/.claude:/root/.claude
+    working_dir: /workspace
+    env_file:
+      - .env
+    command: go run ./cmd/reviewbridge start
