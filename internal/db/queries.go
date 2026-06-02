@@ -151,6 +151,17 @@ func (d *DB) GetComment(commentID string) (*Comment, error) {
 	return scanComment(row)
 }
 
+func (d *DB) SetTriageResult(commentID, verdict string) error {
+	res, err := d.sql.Exec(
+		`UPDATE comments SET triage_verdict = ?, state = ? WHERE comment_id = ?`,
+		verdict, CommentStateTriaged, commentID,
+	)
+	if err != nil {
+		return err
+	}
+	return expectOneRow(res, commentID)
+}
+
 func (d *DB) UpdateCommentState(commentID, state string) error {
 	res, err := d.sql.Exec(
 		`UPDATE comments SET state = ? WHERE comment_id = ?`,
