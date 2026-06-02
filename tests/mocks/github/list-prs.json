@@ -1,0 +1,29 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/repos/.+/pulls",
+    "queryParameters": {
+      "state": { "equalTo": "open" }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": [
+      {
+        "number": 12,
+        "title": "Fix authentication bug",
+        "state": "open",
+        "head": { "ref": "feature/issue-a" },
+        "html_url": "https://github.com/owner/repo/pull/12"
+      },
+      {
+        "number": 13,
+        "title": "Add unit tests",
+        "state": "open",
+        "head": { "ref": "feature/issue-b" },
+        "html_url": "https://github.com/owner/repo/pull/13"
+      }
+    ]
+  }
+}

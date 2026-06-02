@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v4/projects/.+/merge_requests/[0-9]+/notes"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": [
+      {
+        "id": 1,
+        "author": { "username": "alice" },
+        "body": "Missing null check",
+        "created_at": "2024-01-15T10:30:00Z",
+        "position": { "new_path": "main.go", "new_line": 42 }
+      },
+      {
+        "id": 2,
+        "author": { "username": "gitlab-bot" },
+        "body": "Array access without bounds check",
+        "created_at": "2024-01-15T10:31:00Z",
+        "position": { "new_path": "service.go", "new_line": 87 }
+      }
+    ]
+  }
+}

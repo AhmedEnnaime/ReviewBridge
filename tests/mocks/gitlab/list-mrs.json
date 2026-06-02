@@ -1,0 +1,29 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v4/projects/.+/merge_requests",
+    "queryParameters": {
+      "state": { "equalTo": "opened" }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": [
+      {
+        "iid": 7,
+        "title": "Fix authentication bug",
+        "state": "opened",
+        "source_branch": "feature/issue-a",
+        "web_url": "https://gitlab.com/owner/repo/-/merge_requests/7"
+      },
+      {
+        "iid": 8,
+        "title": "Add unit tests",
+        "state": "opened",
+        "source_branch": "feature/issue-b",
+        "web_url": "https://gitlab.com/owner/repo/-/merge_requests/8"
+      }
+    ]
+  }
+}
