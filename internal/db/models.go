@@ -53,4 +53,5 @@ type Comment struct {
 	FetchedAt     time.Time
 	TriageVerdict string
 	State         string
+	CommitHash    string
 }

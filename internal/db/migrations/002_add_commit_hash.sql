@@ -1,0 +1,1 @@
+ALTER TABLE comments ADD COLUMN commit_hash TEXT NOT NULL DEFAULT '';

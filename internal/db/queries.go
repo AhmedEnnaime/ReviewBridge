@@ -123,8 +123,8 @@ func (d *DB) LinkPRToSession(prID, sessionID string) error {
 func (d *DB) SaveComment(c *Comment) error {
 	_, err := d.sql.Exec(
 		`INSERT INTO comments
-		   (comment_id, pr_id, author, body, file_path, line_number, created_at, fetched_at, triage_verdict, state)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (comment_id, pr_id, author, body, file_path, line_number, created_at, fetched_at, triage_verdict, state, commit_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(comment_id) DO UPDATE SET
 		   pr_id          = excluded.pr_id,
 		   author         = excluded.author,
@@ -134,9 +134,10 @@ func (d *DB) SaveComment(c *Comment) error {
 		   created_at     = excluded.created_at,
 		   fetched_at     = excluded.fetched_at,
 		   triage_verdict = excluded.triage_verdict,
-		   state          = excluded.state`,
+		   state          = excluded.state,
+		   commit_hash    = excluded.commit_hash`,
 		c.CommentID, c.PRID, c.Author, c.Body, c.FilePath, c.LineNumber,
-		timeToStr(c.CreatedAt), timeToStr(c.FetchedAt), c.TriageVerdict, c.State,
+		timeToStr(c.CreatedAt), timeToStr(c.FetchedAt), c.TriageVerdict, c.State, c.CommitHash,
 	)
 	return err
 }
@@ -144,11 +145,55 @@ func (d *DB) SaveComment(c *Comment) error {
 func (d *DB) GetComment(commentID string) (*Comment, error) {
 	row := d.sql.QueryRow(
 		`SELECT comment_id, pr_id, author, body, file_path, line_number,
-		        created_at, fetched_at, triage_verdict, state
+		        created_at, fetched_at, triage_verdict, state, commit_hash
 		 FROM comments WHERE comment_id = ?`,
 		commentID,
 	)
 	return scanComment(row)
+}
+
+func (d *DB) MarkCommentDone(commentID, commitHash string) error {
+	res, err := d.sql.Exec(
+		`UPDATE comments SET state = ?, commit_hash = ? WHERE comment_id = ?`,
+		CommentStateDone, commitHash, commentID,
+	)
+	if err != nil {
+		return err
+	}
+	return expectOneRow(res, commentID)
+}
+
+func (d *DB) ListCommentsByStateAndSession(state, sessionID string) ([]*Comment, error) {
+	rows, err := d.sql.Query(
+		`SELECT c.comment_id, c.pr_id, c.author, c.body, c.file_path, c.line_number,
+		        c.created_at, c.fetched_at, c.triage_verdict, c.state, c.commit_hash
+		 FROM comments c
+		 JOIN pull_requests pr ON c.pr_id = pr.pr_id
+		 WHERE c.state = ? AND pr.session_id = ?`,
+		state, sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanComments(rows)
+}
+
+func (d *DB) ListCommentsByStateAndBranch(state, branchName string) ([]*Comment, error) {
+	rows, err := d.sql.Query(
+		`SELECT c.comment_id, c.pr_id, c.author, c.body, c.file_path, c.line_number,
+		        c.created_at, c.fetched_at, c.triage_verdict, c.state, c.commit_hash
+		 FROM comments c
+		 JOIN pull_requests pr ON c.pr_id = pr.pr_id
+		 JOIN sessions s ON pr.session_id = s.session_id
+		 WHERE c.state = ? AND s.branch_name = ?`,
+		state, branchName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanComments(rows)
 }
 
 func (d *DB) SetTriageResult(commentID, verdict string) error {
@@ -176,7 +221,7 @@ func (d *DB) UpdateCommentState(commentID, state string) error {
 func (d *DB) ListCommentsByPR(prID string) ([]*Comment, error) {
 	rows, err := d.sql.Query(
 		`SELECT comment_id, pr_id, author, body, file_path, line_number,
-		        created_at, fetched_at, triage_verdict, state
+		        created_at, fetched_at, triage_verdict, state, commit_hash
 		 FROM comments WHERE pr_id = ?`,
 		prID,
 	)
@@ -190,7 +235,7 @@ func (d *DB) ListCommentsByPR(prID string) ([]*Comment, error) {
 func (d *DB) ListQueuedComments() ([]*Comment, error) {
 	rows, err := d.sql.Query(
 		`SELECT comment_id, pr_id, author, body, file_path, line_number,
-		        created_at, fetched_at, triage_verdict, state
+		        created_at, fetched_at, triage_verdict, state, commit_hash
 		 FROM comments WHERE state = ?`,
 		CommentStateQueued,
 	)
@@ -270,7 +315,7 @@ func scanComment(row *sql.Row) (*Comment, error) {
 	var createdAt, fetchedAt string
 	err := row.Scan(
 		&c.CommentID, &c.PRID, &c.Author, &c.Body, &c.FilePath, &c.LineNumber,
-		&createdAt, &fetchedAt, &c.TriageVerdict, &c.State,
+		&createdAt, &fetchedAt, &c.TriageVerdict, &c.State, &c.CommitHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -290,7 +335,7 @@ func scanComments(rows *sql.Rows) ([]*Comment, error) {
 		var createdAt, fetchedAt string
 		if err := rows.Scan(
 			&c.CommentID, &c.PRID, &c.Author, &c.Body, &c.FilePath, &c.LineNumber,
-			&createdAt, &fetchedAt, &c.TriageVerdict, &c.State,
+			&createdAt, &fetchedAt, &c.TriageVerdict, &c.State, &c.CommitHash,
 		); err != nil {
 			return nil, err
 		}
