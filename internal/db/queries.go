@@ -233,11 +233,15 @@ func (d *DB) ListCommentsByPR(prID string) ([]*Comment, error) {
 }
 
 func (d *DB) ListQueuedComments() ([]*Comment, error) {
+	return d.ListCommentsByState(CommentStateQueued)
+}
+
+func (d *DB) ListCommentsByState(state string) ([]*Comment, error) {
 	rows, err := d.sql.Query(
 		`SELECT comment_id, pr_id, author, body, file_path, line_number,
 		        created_at, fetched_at, triage_verdict, state, commit_hash
 		 FROM comments WHERE state = ?`,
-		CommentStateQueued,
+		state,
 	)
 	if err != nil {
 		return nil, err

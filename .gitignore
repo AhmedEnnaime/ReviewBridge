@@ -1,7 +1,7 @@
 # Binaries
 bin/
 dist/
-reviewbridge
+/reviewbridge
 
 # Go
 *.test
