@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ahmedennaime/reviewbridge/internal/db"
@@ -10,6 +12,7 @@ type Registry struct {
 	db        *db.DB
 	watcher   *Watcher
 	getBranch func(string) (string, error)
+	onSaved   func(*db.Session)
 }
 
 func NewRegistry(d *db.DB) *Registry {
@@ -23,13 +26,21 @@ func (r *Registry) SetBranchFn(fn func(string) (string, error)) {
 	r.getBranch = fn
 }
 
+func (r *Registry) SetOnSaved(fn func(*db.Session)) {
+	r.onSaved = fn
+}
+
 func (r *Registry) Start(sessionsPath string) error {
 	w, err := NewWatcher(r.handleNewSession)
 	if err != nil {
 		return err
 	}
 	r.watcher = w
-	return w.Watch(sessionsPath)
+	if err := w.Watch(sessionsPath); err != nil {
+		return err
+	}
+	r.scanExisting(sessionsPath)
+	return nil
 }
 
 func (r *Registry) Stop() error {
@@ -60,11 +71,33 @@ func (r *Registry) handleNewSession(path string) {
 		createdAt = time.Now()
 	}
 
-	r.db.SaveSession(&db.Session{
+	s := &db.Session{
 		SessionID:    meta.SessionID,
 		RepoPath:     meta.RepoPath,
 		BranchName:   branch,
 		LastActiveAt: createdAt,
 		Status:       db.SessionStatusActive,
-	})
+	}
+	r.db.SaveSession(s) //nolint:errcheck
+
+	if r.onSaved != nil {
+		r.onSaved(s)
+	}
+}
+
+func (r *Registry) scanExisting(sessionsPath string) {
+	entries, err := os.ReadDir(sessionsPath)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(sessionsPath, entry.Name())
+		files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+		for _, f := range files {
+			r.handleNewSession(f)
+		}
+	}
 }

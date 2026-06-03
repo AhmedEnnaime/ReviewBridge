@@ -46,12 +46,12 @@ func defaultInitValidators() initValidators {
 }
 
 func validateAnthropicKey(client *http.Client, key string) error {
-	body := `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
+	body := `{"model":"claude-sonnet-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}`
 	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("anthropic-api-key", key)
+	req.Header.Set("x-api-key", key)
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("content-type", "application/json")
 	resp, err := client.Do(req)
@@ -59,10 +59,11 @@ func validateAnthropicKey(client *http.Client, key string) error {
 		return fmt.Errorf("could not reach Anthropic API: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("invalid Anthropic API key")
+	if resp.StatusCode == http.StatusOK {
+		return nil
 	}
-	return nil
+	raw, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("Anthropic API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 }
 
 func validateGitHubToken(client *http.Client, token string) error {

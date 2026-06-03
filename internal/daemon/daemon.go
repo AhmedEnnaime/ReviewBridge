@@ -75,6 +75,7 @@ func (d *Daemon) Start() error {
 	}
 
 	if d.deps.Registry != nil && d.deps.SessionsPath != "" {
+		d.deps.Registry.SetOnSaved(d.discoverPRsForSession)
 		if err := d.deps.Registry.Start(d.deps.SessionsPath); err != nil {
 			return fmt.Errorf("start session registry: %w", err)
 		}
