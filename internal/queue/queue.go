@@ -7,11 +7,24 @@ import (
 )
 
 type Queue struct {
-	db *db.DB
+	db       *db.DB
+	onChange func(commentIDs []string)
 }
 
 func New(d *db.DB) *Queue {
 	return &Queue{db: d}
+}
+
+// WithOnChange registers a callback that fires after any state transition.
+func (q *Queue) WithOnChange(fn func(commentIDs []string)) *Queue {
+	q.onChange = fn
+	return q
+}
+
+func (q *Queue) notifyChange(ids []string) {
+	if q.onChange != nil && len(ids) > 0 {
+		q.onChange(ids)
+	}
 }
 
 func (q *Queue) Enqueue(commentIDs []string) error {
@@ -34,6 +47,7 @@ func (q *Queue) Enqueue(commentIDs []string) error {
 			return fmt.Errorf("cannot enqueue comment %q in state %q", id, c.State)
 		}
 	}
+	q.notifyChange(commentIDs)
 	return nil
 }
 
@@ -43,6 +57,7 @@ func (q *Queue) Park(commentIDs []string) error {
 			return err
 		}
 	}
+	q.notifyChange(commentIDs)
 	return nil
 }
 
@@ -51,11 +66,14 @@ func (q *Queue) Unpark(branchName string) error {
 	if err != nil {
 		return err
 	}
+	ids := make([]string, 0, len(parked))
 	for _, c := range parked {
 		if err := q.db.UpdateCommentState(c.CommentID, db.CommentStateQueued); err != nil {
 			return err
 		}
+		ids = append(ids, c.CommentID)
 	}
+	q.notifyChange(ids)
 	return nil
 }
 
@@ -65,6 +83,7 @@ func (q *Queue) MarkInProgress(commentIDs []string) error {
 			return err
 		}
 	}
+	q.notifyChange(commentIDs)
 	return nil
 }
 
@@ -74,6 +93,7 @@ func (q *Queue) MarkDone(commentIDs []string, commitHash string) error {
 			return err
 		}
 	}
+	q.notifyChange(commentIDs)
 	return nil
 }
 

@@ -20,10 +20,13 @@ import (
 	gitlab_pkg "github.com/ahmedennaime/reviewbridge/internal/platforms/gitlab"
 	"github.com/ahmedennaime/reviewbridge/internal/poller"
 	"github.com/ahmedennaime/reviewbridge/internal/queue"
+	"github.com/ahmedennaime/reviewbridge/internal/queuefile"
 	"github.com/ahmedennaime/reviewbridge/internal/runner"
 	"github.com/ahmedennaime/reviewbridge/internal/session"
 	"github.com/ahmedennaime/reviewbridge/internal/triage"
 )
+
+const daemonNotRunningMsg = "ReviewBridge daemon is not running"
 
 func defaultPIDPath() string {
 	home, _ := os.UserHomeDir()
@@ -82,17 +85,17 @@ func defaultSpawner() func() error {
 func runStop(out io.Writer, pidPath string) error {
 	pid, err := readPID(pidPath)
 	if err != nil {
-		fmt.Fprintln(out, "ReviewBridge daemon is not running")
+		fmt.Fprintln(out, daemonNotRunningMsg)
 		return nil
 	}
 	if !isProcessAlive(pid) {
 		os.Remove(pidPath)
-		fmt.Fprintln(out, "ReviewBridge daemon is not running")
+		fmt.Fprintln(out, daemonNotRunningMsg)
 		return nil
 	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		fmt.Fprintln(out, "ReviewBridge daemon is not running")
+		fmt.Fprintln(out, daemonNotRunningMsg)
 		return nil
 	}
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
@@ -130,7 +133,12 @@ func runDaemon(configPath, dbPath, pidPath string) error {
 	}
 
 	plats := buildPlatforms(cfg)
-	q := queue.New(d)
+	qfw := queuefile.New(expandHomePath(config.QueueDir()), d)
+	q := queue.New(d).WithOnChange(func(ids []string) {
+		for _, id := range ids {
+			qfw.SyncForComment(id) //nolint:errcheck
+		}
+	})
 	p := poller.New(d, plats, interval)
 	t := triage.New(cfg.AnthropicAPIKey, d)
 	n := notify.New()
