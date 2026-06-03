@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/ahmedennaime/reviewbridge/internal/config"
 	"github.com/ahmedennaime/reviewbridge/internal/daemon"
 	"github.com/ahmedennaime/reviewbridge/internal/db"
+	"github.com/ahmedennaime/reviewbridge/internal/dialog"
 	"github.com/ahmedennaime/reviewbridge/internal/notify"
 	"github.com/ahmedennaime/reviewbridge/internal/platforms"
 	github_pkg "github.com/ahmedennaime/reviewbridge/internal/platforms/github"
@@ -31,6 +33,11 @@ const daemonNotRunningMsg = "ReviewBridge daemon is not running"
 func defaultPIDPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".reviewbridge", "daemon.pid")
+}
+
+func defaultLogPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".reviewbridge", "daemon.log")
 }
 
 func readPID(path string) (int, error) {
@@ -61,10 +68,12 @@ func runStart(out io.Writer, pidPath string, spawner func() error) error {
 		time.Sleep(100 * time.Millisecond)
 		if pid, err := readPID(pidPath); err == nil && isProcessAlive(pid) {
 			fmt.Fprintf(out, "ReviewBridge daemon started (pid %d)\n", pid)
+			fmt.Fprintf(out, "Logs: %s\n", defaultLogPath())
 			return nil
 		}
 	}
 	fmt.Fprintln(out, "ReviewBridge daemon started")
+	fmt.Fprintf(out, "Logs: %s\n", defaultLogPath())
 	return nil
 }
 
@@ -74,12 +83,29 @@ func defaultSpawner() func() error {
 		if err != nil {
 			return err
 		}
+		logPath := defaultLogPath()
+		if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+			return err
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
 		cmd := exec.Command(exe, "daemon")
 		cmd.Stdin = nil
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		return cmd.Start()
 	}
+}
+
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func runStop(out io.Writer, pidPath string) error {
@@ -160,6 +186,22 @@ func runDaemon(configPath, dbPath, pidPath string) error {
 	}
 
 	dm := daemon.New(deps, pidPath)
+
+	if !stdinIsTTY() {
+		log.Printf("[daemon] no tty detected — running headless (fix-verdict comments auto-approved)")
+		dm.WithShowDialog(func(items []dialog.DialogItem) ([]string, error) {
+			var approved []string
+			for _, item := range items {
+				if item.Verdict == db.VerdictFix {
+					approved = append(approved, item.CommentID)
+				}
+			}
+			log.Printf("[daemon] headless auto-approved %d fix comment(s), %d your-call/skip parked",
+				len(approved), len(items)-len(approved))
+			return approved, nil
+		})
+	}
+
 	return dm.Run()
 }
 

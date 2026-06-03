@@ -1,6 +1,7 @@
 package session
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -79,6 +80,8 @@ func (r *Registry) handleNewSession(path string) {
 		Status:       db.SessionStatusActive,
 	}
 	r.db.SaveSession(s) //nolint:errcheck
+	log.Printf("[session] detected session=%s branch=%s repo=%s",
+		meta.SessionID[:min(8, len(meta.SessionID))], branch, meta.RepoPath)
 
 	if r.onSaved != nil {
 		r.onSaved(s)

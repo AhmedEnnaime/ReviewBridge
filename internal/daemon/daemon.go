@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -102,9 +103,12 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) Run() error {
+	log.Printf("[daemon] starting")
 	if err := d.Start(); err != nil {
+		log.Printf("[daemon] start failed: %v", err)
 		return err
 	}
+	log.Printf("[daemon] started, watching for sessions and comments")
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -141,13 +145,16 @@ func (d *Daemon) RouteComments(comments []*db.Comment, pr *db.PullRequest) {
 
 	d.deps.Queue.MarkInProgress(ids)
 	prompt := runner.BuildPrompt(comments)
+	log.Printf("[runner] invoking claude --resume %s (%d comment(s))", sessionID, len(comments))
 	result, err := d.deps.Runner.Run(sessionID, prompt)
 	if err != nil {
+		log.Printf("[runner] failed for session %s: %v", sessionID, err)
 		for _, id := range ids {
 			d.deps.DB.UpdateCommentState(id, db.CommentStateQueued)
 		}
 		return
 	}
+	log.Printf("[runner] done session=%s duration=%v commit=%s", sessionID, result.Duration, result.CommitHash)
 	d.deps.Queue.MarkDone(ids, result.CommitHash)
 }
 
@@ -159,6 +166,7 @@ func (d *Daemon) ProcessOnce() {
 func (d *Daemon) processNewComments() {
 	prs, err := d.deps.DB.ListOpenPullRequests()
 	if err != nil {
+		log.Printf("[daemon] list PRs failed: %v", err)
 		return
 	}
 	for _, pr := range prs {
@@ -168,8 +176,10 @@ func (d *Daemon) processNewComments() {
 			continue
 		}
 
+		log.Printf("[daemon] triaging %d fetched comment(s) for %s", len(fetched), pr.PRID)
 		repoPath := d.getRepoPath(pr)
 		if _, err := d.deps.Triage.Run(fetched, "", repoPath); err != nil {
+			log.Printf("[daemon] triage failed for %s: %v", pr.PRID, err)
 			continue
 		}
 
@@ -179,6 +189,7 @@ func (d *Daemon) processNewComments() {
 			continue
 		}
 
+		log.Printf("[daemon] triage done: %d comment(s) ready for %s", len(triaged), pr.PRID)
 		prNum := prNumberFromID(pr.PRID)
 		d.deps.Notifier.NotifyComments(
 			notify.PR{Number: prNum, Branch: pr.BranchName},
@@ -187,9 +198,11 @@ func (d *Daemon) processNewComments() {
 
 		approvedIDs, _ := d.showDialog(toDialogItems(triaged))
 		if len(approvedIDs) == 0 {
+			log.Printf("[daemon] no comments approved for %s", pr.PRID)
 			continue
 		}
 
+		log.Printf("[daemon] %d comment(s) approved for %s, routing to runner", len(approvedIDs), pr.PRID)
 		d.deps.Queue.Enqueue(approvedIDs)
 		d.RouteComments(filterByIDs(triaged, approvedIDs), pr)
 	}

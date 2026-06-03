@@ -2,6 +2,7 @@ package poller
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,7 @@ func (p *Poller) DiscoverPRs(session *db.Session, platformName, repo string) err
 	}
 	openPRs, err := plat.ListOpenPullRequests(repo)
 	if err != nil {
+		log.Printf("[poller] list PRs failed for %s/%s: %v", platformName, repo, err)
 		return err
 	}
 	now := time.Now()
@@ -86,7 +88,7 @@ func (p *Poller) DiscoverPRs(session *db.Session, platformName, repo string) err
 			continue
 		}
 		sid := session.SessionID
-		p.db.SavePullRequest(&db.PullRequest{
+		p.db.SavePullRequest(&db.PullRequest{ //nolint:errcheck
 			PRID:          prID,
 			Platform:      platformName,
 			Repo:          repo,
@@ -95,6 +97,7 @@ func (p *Poller) DiscoverPRs(session *db.Session, platformName, repo string) err
 			LastCheckedAt: now,
 			Status:        db.PRStatusOpen,
 		})
+		log.Printf("[poller] discovered PR %s for branch=%s", prID, pr.SourceBranch)
 	}
 	return nil
 }
@@ -110,7 +113,11 @@ func (p *Poller) pollPR(pr *db.PullRequest) {
 	}
 	comments, err := plat.ListCommentsSince(pr.Repo, number, pr.LastCheckedAt)
 	if err != nil {
+		log.Printf("[poller] fetch comments failed for %s: %v", pr.PRID, err)
 		return
+	}
+	if len(comments) > 0 {
+		log.Printf("[poller] fetched %d new comment(s) for %s", len(comments), pr.PRID)
 	}
 	now := time.Now()
 	for _, c := range comments {

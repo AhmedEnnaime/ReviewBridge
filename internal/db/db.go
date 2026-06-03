@@ -34,6 +34,15 @@ func Open(path string) (*DB, error) {
 
 	sqlDB.SetMaxOpenConns(1)
 
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
+	if _, err := sqlDB.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
 	d := &DB{sql: sqlDB}
 	if err := d.migrate(); err != nil {
 		sqlDB.Close()
