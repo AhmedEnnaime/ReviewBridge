@@ -15,7 +15,6 @@ func New(d *db.DB) *Queue {
 	return &Queue{db: d}
 }
 
-// WithOnChange registers a callback that fires after any state transition.
 func (q *Queue) WithOnChange(fn func(commentIDs []string)) *Queue {
 	q.onChange = fn
 	return q

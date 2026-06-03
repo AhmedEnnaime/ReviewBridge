@@ -115,8 +115,6 @@ var updateCmd = &cobra.Command{
 	},
 }
 
-// daemonCmd is the internal command that runs the daemon in the foreground.
-// It is started by "start" as a background subprocess.
 var daemonCmd = &cobra.Command{
 	Use:    "daemon",
 	Short:  "Run the daemon in the foreground (internal)",

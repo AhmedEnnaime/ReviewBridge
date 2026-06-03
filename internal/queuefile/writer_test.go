@@ -39,7 +39,6 @@ func TestQueueFileUpdatedOnStateChange(t *testing.T) {
 
 	must(t, q.Enqueue([]string{"c1"}))
 
-	// File should exist after enqueue.
 	expected := filepath.Join(dir, "feature-issue-a.json")
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("queue file missing after enqueue: %v", err)
@@ -48,7 +47,6 @@ func TestQueueFileUpdatedOnStateChange(t *testing.T) {
 	must(t, q.MarkInProgress([]string{"c1"}))
 	must(t, q.MarkDone([]string{"c1"}, "abc1234"))
 
-	// File should be removed when no more pending comments.
 	if _, err := os.Stat(expected); !os.IsNotExist(err) {
 		t.Error("queue file should be removed after comment is done")
 	}
@@ -71,8 +69,6 @@ func TestQueueFileCreatesDirectoryIfMissing(t *testing.T) {
 		t.Fatalf("directory should have been created: %v", err)
 	}
 }
-
-// --- helpers ---
 
 func setup(t *testing.T) (*db.DB, *queue.Queue, *queuefile.Writer, string) {
 	t.Helper()

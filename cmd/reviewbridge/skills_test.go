@@ -10,10 +10,8 @@ import (
 func TestInstallSkillCopiesFile(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, ".claude", "commands")
-	os.MkdirAll(dest, 0755)
+	os.MkdirAll(dest, 0755) //nolint:errcheck
 
-	// Redirect installSkill to temp dir by swapping home-derived path.
-	// We test installSkillTo directly to keep it testable.
 	if err := installSkillTo(dest, &strings.Builder{}); err != nil {
 		t.Fatalf("installSkillTo: %v", err)
 	}
@@ -27,7 +25,6 @@ func TestInstallSkillCopiesFile(t *testing.T) {
 func TestInstallSkillOverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 
-	// Write a stale version first.
 	os.WriteFile(filepath.Join(dir, "check-reviews.md"), []byte("old content"), 0644) //nolint:errcheck
 
 	if err := installSkillTo(dir, &strings.Builder{}); err != nil {
@@ -42,7 +39,6 @@ func TestInstallSkillOverwritesExisting(t *testing.T) {
 
 func TestInstallSkillCreatesDirectoryIfMissing(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "missing", "commands")
-	// dir does not exist yet.
 
 	if err := installSkillTo(dir, &strings.Builder{}); err != nil {
 		t.Fatalf("installSkillTo: %v", err)

@@ -150,6 +150,11 @@ func (d *Daemon) RouteComments(comments []*db.Comment, pr *db.PullRequest) {
 	d.deps.Queue.MarkDone(ids, result.CommitHash)
 }
 
+func (d *Daemon) ProcessOnce() {
+	d.processNewComments()
+	d.unParkReadySessions()
+}
+
 func (d *Daemon) processNewComments() {
 	prs, err := d.deps.DB.ListOpenPullRequests()
 	if err != nil {

@@ -180,7 +180,6 @@ func TestInitSkipsGitLabIfEmpty(t *testing.T) {
 	}
 }
 
-// redirectTo returns an http.RoundTripper that rewrites every request to the given base URL.
 type redirectTransport struct{ base string }
 
 func redirectTo(base string) http.RoundTripper { return &redirectTransport{base: base} }

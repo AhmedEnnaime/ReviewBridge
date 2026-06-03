@@ -31,8 +31,7 @@ func TestStartFailsIfAlreadyRunning(t *testing.T) {
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "daemon.pid")
 
-	// Write current process's PID — it is definitely alive.
-	os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600)
+	os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600) //nolint:errcheck
 
 	var out strings.Builder
 	spawnerCalled := false
@@ -59,7 +58,6 @@ func TestStopKillsDaemon(t *testing.T) {
 		t.Fatalf("start subprocess: %v", err)
 	}
 	pid := cmd.Process.Pid
-	// Ensure cleanup even if test fails.
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() }) //nolint:errcheck
 
 	dir := t.TempDir()
@@ -75,7 +73,6 @@ func TestStopKillsDaemon(t *testing.T) {
 		t.Errorf("expected 'stopped' message, got: %q", out.String())
 	}
 
-	// PID file must be gone.
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Error("PID file should have been removed after stop")
 	}
@@ -83,7 +80,7 @@ func TestStopKillsDaemon(t *testing.T) {
 
 func TestStopFailsIfNotRunning(t *testing.T) {
 	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "daemon.pid") // does not exist
+	pidPath := filepath.Join(dir, "daemon.pid")
 
 	var out strings.Builder
 	if err := runStop(&out, pidPath); err != nil {
