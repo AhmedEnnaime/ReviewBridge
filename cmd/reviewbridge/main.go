@@ -10,6 +10,8 @@ import (
 	"github.com/ahmedennaime/reviewbridge/internal/db"
 )
 
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "reviewbridge",
 	Short: "Routes PR/MR review comments into the right Claude Code session",
@@ -22,7 +24,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("reviewbridge v0.1.0")
+		fmt.Printf("reviewbridge %s\n", version)
 	},
 }
 
@@ -110,8 +112,8 @@ var installSkillCmd = &cobra.Command{
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Check for a newer version of ReviewBridge",
-	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("reviewbridge v0.1.0 — check https://github.com/ahmedennaime/reviewbridge/releases for updates")
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return newUpdateChecker(version).check(os.Stdout)
 	},
 }
 
