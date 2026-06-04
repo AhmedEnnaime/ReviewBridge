@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -135,12 +136,9 @@ func (d *Daemon) flushPendingToQueueFiles() {
 
 		var recovered int
 		for _, c := range allComments {
-			for _, s := range recoverStates {
-				if c.State == s {
-					d.deps.DB.UpdateCommentState(c.CommentID, db.CommentStateQueued) //nolint:errcheck
-					recovered++
-					break
-				}
+			if slices.Contains(recoverStates, c.State) {
+				d.deps.DB.UpdateCommentState(c.CommentID, db.CommentStateQueued) //nolint:errcheck
+				recovered++
 			}
 		}
 

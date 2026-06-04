@@ -68,7 +68,7 @@ func (d *DB) ListActiveSessions() ([]*Session, error) {
 }
 
 func (d *DB) SavePullRequest(pr *PullRequest) error {
-	var sessionID interface{}
+	var sessionID any
 	if pr.SessionID != nil {
 		sessionID = *pr.SessionID
 	}
