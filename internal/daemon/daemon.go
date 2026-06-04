@@ -12,11 +12,9 @@ import (
 	"time"
 
 	"github.com/ahmedennaime/reviewbridge/internal/db"
-	"github.com/ahmedennaime/reviewbridge/internal/dialog"
 	"github.com/ahmedennaime/reviewbridge/internal/notify"
 	"github.com/ahmedennaime/reviewbridge/internal/platforms"
 	"github.com/ahmedennaime/reviewbridge/internal/queue"
-	"github.com/ahmedennaime/reviewbridge/internal/runner"
 	"github.com/ahmedennaime/reviewbridge/internal/session"
 	"github.com/ahmedennaime/reviewbridge/internal/triage"
 )
@@ -28,13 +26,12 @@ type pollerIface interface {
 	DiscoverPRs(*db.Session, string, string) error
 }
 
-type runnerIface interface {
-	IsSessionActive(string) bool
-	Run(string, string) (*runner.RunResult, error)
-}
-
 type triagerIface interface {
 	Run([]*db.Comment, string, string) ([]triage.TriageResult, error)
+}
+
+type queueWriterIface interface {
+	SyncBranch(branch string) error
 }
 
 type Deps struct {
@@ -42,32 +39,25 @@ type Deps struct {
 	Poller       pollerIface
 	Triage       triagerIface
 	Queue        *queue.Queue
+	QueueWriter  queueWriterIface
 	Notifier     *notify.Notifier
-	Runner       runnerIface
 	Registry     *session.Registry
 	Platforms    map[string]platforms.Platform
 	SessionsPath string
 }
 
 type Daemon struct {
-	deps       Deps
-	pidPath    string
-	showDialog func([]dialog.DialogItem) ([]string, error)
-	done       chan struct{}
+	deps    Deps
+	pidPath string
+	done    chan struct{}
 }
 
 func New(deps Deps, pidPath string) *Daemon {
 	return &Daemon{
-		deps:       deps,
-		pidPath:    pidPath,
-		showDialog: dialog.Show,
-		done:       make(chan struct{}),
+		deps:    deps,
+		pidPath: pidPath,
+		done:    make(chan struct{}),
 	}
-}
-
-func (d *Daemon) WithShowDialog(fn func([]dialog.DialogItem) ([]string, error)) *Daemon {
-	d.showDialog = fn
-	return d
 }
 
 func (d *Daemon) Start() error {
@@ -81,6 +71,8 @@ func (d *Daemon) Start() error {
 			return fmt.Errorf("start session registry: %w", err)
 		}
 	}
+
+	d.flushPendingToQueueFiles()
 
 	d.deps.Poller.Start()
 	return nil
@@ -126,41 +118,41 @@ func (d *Daemon) Run() error {
 			return nil
 		case <-tick.C:
 			d.processNewComments()
-			d.unParkReadySessions()
 		}
 	}
-}
-
-func (d *Daemon) RouteComments(comments []*db.Comment, pr *db.PullRequest) {
-	if pr == nil || pr.SessionID == nil {
-		return
-	}
-	sessionID := *pr.SessionID
-	ids := commentIDs(comments)
-
-	if d.deps.Runner.IsSessionActive(sessionID) {
-		d.deps.Queue.Park(ids)
-		return
-	}
-
-	d.deps.Queue.MarkInProgress(ids)
-	prompt := runner.BuildPrompt(comments)
-	log.Printf("[runner] invoking claude --resume %s (%d comment(s))", sessionID, len(comments))
-	result, err := d.deps.Runner.Run(sessionID, prompt)
-	if err != nil {
-		log.Printf("[runner] failed for session %s: %v", sessionID, err)
-		for _, id := range ids {
-			d.deps.DB.UpdateCommentState(id, db.CommentStateQueued)
-		}
-		return
-	}
-	log.Printf("[runner] done session=%s duration=%v commit=%s", sessionID, result.Duration, result.CommitHash)
-	d.deps.Queue.MarkDone(ids, result.CommitHash)
 }
 
 func (d *Daemon) ProcessOnce() {
 	d.processNewComments()
-	d.unParkReadySessions()
+}
+
+func (d *Daemon) flushPendingToQueueFiles() {
+	recoverStates := []string{db.CommentStateInProgress, db.CommentStateStaleSession}
+
+	prs, _ := d.deps.DB.ListOpenPullRequests()
+	for _, pr := range prs {
+		allComments, _ := d.deps.DB.ListCommentsByPR(pr.PRID)
+
+		var recovered int
+		for _, c := range allComments {
+			for _, s := range recoverStates {
+				if c.State == s {
+					d.deps.DB.UpdateCommentState(c.CommentID, db.CommentStateQueued) //nolint:errcheck
+					recovered++
+					break
+				}
+			}
+		}
+
+		allComments, _ = d.deps.DB.ListCommentsByPR(pr.PRID)
+		queued := filterByState(allComments, db.CommentStateQueued)
+		if len(queued) == 0 {
+			continue
+		}
+
+		d.syncQueueFile(pr.BranchName)
+		log.Printf("[daemon] %d queued comment(s) for %s awaiting /check-reviews in Claude Code", len(queued), pr.BranchName)
+	}
 }
 
 func (d *Daemon) processNewComments() {
@@ -189,50 +181,42 @@ func (d *Daemon) processNewComments() {
 			continue
 		}
 
-		log.Printf("[daemon] triage done: %d comment(s) ready for %s", len(triaged), pr.PRID)
+		var actionableIDs []string
+		for _, c := range triaged {
+			if c.TriageVerdict != db.VerdictSkip {
+				actionableIDs = append(actionableIDs, c.CommentID)
+			}
+		}
+		skipped := len(triaged) - len(actionableIDs)
+
+		if len(actionableIDs) == 0 {
+			log.Printf("[daemon] triage done: all %d comment(s) skipped for %s", skipped, pr.PRID)
+			continue
+		}
+
+		d.deps.Queue.Enqueue(actionableIDs) //nolint:errcheck
+		d.syncQueueFile(pr.BranchName)
+
 		prNum := prNumberFromID(pr.PRID)
 		d.deps.Notifier.NotifyComments(
 			notify.PR{Number: prNum, Branch: pr.BranchName},
 			toNotifyResults(triaged),
 		)
-
-		approvedIDs, _ := d.showDialog(toDialogItems(triaged))
-		if len(approvedIDs) == 0 {
-			log.Printf("[daemon] no comments approved for %s", pr.PRID)
-			continue
-		}
-
-		log.Printf("[daemon] %d comment(s) approved for %s, routing to runner", len(approvedIDs), pr.PRID)
-		d.deps.Queue.Enqueue(approvedIDs)
-		d.RouteComments(filterByIDs(triaged, approvedIDs), pr)
+		d.deps.Notifier.Notify(
+			"ReviewBridge — review comments ready",
+			fmt.Sprintf("Run /check-reviews in your Claude Code session for branch %s (%d comment(s))", pr.BranchName, len(actionableIDs)),
+		)
+		log.Printf("[daemon] triage done: %d queued, %d skipped for %s — run /check-reviews in Claude Code", len(actionableIDs), skipped, pr.BranchName)
 	}
 }
 
-func (d *Daemon) unParkReadySessions() {
-	sessions, _ := d.deps.DB.ListActiveSessions()
-	for _, s := range sessions {
-		if d.deps.Runner.IsSessionActive(s.SessionID) {
-			continue
-		}
-		parked, _ := d.deps.Queue.ListParked(s.SessionID)
-		if len(parked) == 0 {
-			continue
-		}
-		d.deps.Queue.Unpark(s.BranchName)
-		if pr := d.getPRForSession(s.SessionID); pr != nil {
-			d.RouteComments(parked, pr)
-		}
+func (d *Daemon) syncQueueFile(branch string) {
+	if d.deps.QueueWriter == nil {
+		return
 	}
-}
-
-func (d *Daemon) getPRForSession(sessionID string) *db.PullRequest {
-	prs, _ := d.deps.DB.ListOpenPullRequests()
-	for _, pr := range prs {
-		if pr.SessionID != nil && *pr.SessionID == sessionID {
-			return pr
-		}
+	if err := d.deps.QueueWriter.SyncBranch(branch); err != nil {
+		log.Printf("[daemon] failed to sync queue file for branch=%s: %v", branch, err)
 	}
-	return nil
 }
 
 func (d *Daemon) getRepoPath(pr *db.PullRequest) string {
@@ -246,14 +230,6 @@ func (d *Daemon) getRepoPath(pr *db.PullRequest) string {
 	return s.RepoPath
 }
 
-func commentIDs(comments []*db.Comment) []string {
-	ids := make([]string, len(comments))
-	for i, c := range comments {
-		ids[i] = c.CommentID
-	}
-	return ids
-}
-
 func filterByState(comments []*db.Comment, state string) []*db.Comment {
 	var out []*db.Comment
 	for _, c := range comments {
@@ -264,19 +240,6 @@ func filterByState(comments []*db.Comment, state string) []*db.Comment {
 	return out
 }
 
-func filterByIDs(comments []*db.Comment, ids []string) []*db.Comment {
-	set := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		set[id] = true
-	}
-	var out []*db.Comment
-	for _, c := range comments {
-		if set[c.CommentID] {
-			out = append(out, c)
-		}
-	}
-	return out
-}
 
 func toNotifyResults(comments []*db.Comment) []notify.CommentResult {
 	out := make([]notify.CommentResult, len(comments))
@@ -286,20 +249,6 @@ func toNotifyResults(comments []*db.Comment) []notify.CommentResult {
 	return out
 }
 
-func toDialogItems(comments []*db.Comment) []dialog.DialogItem {
-	out := make([]dialog.DialogItem, len(comments))
-	for i, c := range comments {
-		out[i] = dialog.DialogItem{
-			CommentID: c.CommentID,
-			Author:    c.Author,
-			Body:      c.Body,
-			FilePath:  c.FilePath,
-			Line:      c.LineNumber,
-			Verdict:   c.TriageVerdict,
-		}
-	}
-	return out
-}
 
 func prNumberFromID(prid string) int {
 	parts := strings.Split(prid, ":")

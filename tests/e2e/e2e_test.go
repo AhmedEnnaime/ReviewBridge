@@ -7,20 +7,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/ahmedennaime/reviewbridge/internal/daemon"
 	"github.com/ahmedennaime/reviewbridge/internal/db"
-	"github.com/ahmedennaime/reviewbridge/internal/dialog"
 	"github.com/ahmedennaime/reviewbridge/internal/notify"
 	"github.com/ahmedennaime/reviewbridge/internal/platforms"
 	github_pkg "github.com/ahmedennaime/reviewbridge/internal/platforms/github"
 	gitlab_pkg "github.com/ahmedennaime/reviewbridge/internal/platforms/gitlab"
 	"github.com/ahmedennaime/reviewbridge/internal/poller"
 	"github.com/ahmedennaime/reviewbridge/internal/queue"
-	"github.com/ahmedennaime/reviewbridge/internal/runner"
 	"github.com/ahmedennaime/reviewbridge/internal/triage"
 )
 
@@ -36,39 +33,6 @@ func (m *e2eTriager) Run(comments []*db.Comment, _, _ string) ([]triage.TriageRe
 		results[i] = triage.TriageResult{CommentID: c.CommentID, Verdict: m.verdict, Reason: "e2e-test"}
 	}
 	return results, nil
-}
-
-type e2eRunner struct {
-	mu              sync.Mutex
-	activeSessionID string
-	calls           []runCall
-}
-
-type runCall struct {
-	SessionID string
-	Prompt    string
-}
-
-func (m *e2eRunner) IsSessionActive(id string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.activeSessionID == id
-}
-
-func (m *e2eRunner) Run(sessionID, prompt string) (*runner.RunResult, error) {
-	m.mu.Lock()
-	m.calls = append(m.calls, runCall{SessionID: sessionID, Prompt: prompt})
-	m.mu.Unlock()
-	return &runner.RunResult{Output: "done", CommitHash: "abc1234"}, nil
-}
-
-func (m *e2eRunner) lastCall() (runCall, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.calls) == 0 {
-		return runCall{}, false
-	}
-	return m.calls[len(m.calls)-1], true
 }
 
 type wmClient struct {
@@ -153,8 +117,7 @@ func seedComment(t *testing.T, d *db.DB, id, prID, state, verdict string) {
 	}))
 }
 
-func newDaemon(t *testing.T, d *db.DB, plats map[string]platforms.Platform,
-	mr *e2eRunner, approveAll bool) (*daemon.Daemon, *poller.Poller) {
+func newDaemon(t *testing.T, d *db.DB, plats map[string]platforms.Platform) (*daemon.Daemon, *poller.Poller) {
 	t.Helper()
 
 	mt := &e2eTriager{db: d, verdict: db.VerdictFix}
@@ -164,25 +127,13 @@ func newDaemon(t *testing.T, d *db.DB, plats map[string]platforms.Platform,
 
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 
-	dialogFn := func(items []dialog.DialogItem) ([]string, error) {
-		if !approveAll {
-			return nil, nil
-		}
-		ids := make([]string, len(items))
-		for i, item := range items {
-			ids[i] = item.CommentID
-		}
-		return ids, nil
-	}
-
 	dmn := daemon.New(daemon.Deps{
 		DB:       d,
 		Poller:   p,
 		Triage:   mt,
 		Queue:    q,
 		Notifier: n,
-		Runner:   mr,
-	}, pidPath).WithShowDialog(dialogFn)
+	}, pidPath)
 
 	return dmn, p
 }
@@ -241,6 +192,13 @@ func must(t *testing.T, err error) {
 	}
 }
 
+func stateOrEmpty(c *db.Comment) string {
+	if c == nil {
+		return "<nil>"
+	}
+	return c.State
+}
+
 func TestE2E_GitHubHappyPath(t *testing.T) {
 	ghURL := os.Getenv("REVIEWBRIDGE_GITHUB_BASE_URL")
 	if ghURL == "" {
@@ -270,34 +228,24 @@ func TestE2E_GitHubHappyPath(t *testing.T) {
 	seedSession(t, d, sessionID, "feature/test")
 	seedPR(t, d, prID, "feature/test", sessionID)
 
-	mr := &e2eRunner{}
 	plats := map[string]platforms.Platform{"github": github_pkg.New("test-token", ghURL)}
-	dmn, p := newDaemon(t, d, plats, mr, true)
+	dmn, _ := newDaemon(t, d, plats)
 
 	must(t, dmn.Start())
 	defer dmn.Stop()
 
 	allComments, _ := d.ListCommentsByPR(prID)
 	if len(filterByState(allComments, db.CommentStateFetched)) != 2 {
-		t.Fatalf("expected 2 fetched comments, got %v", allComments)
+		t.Fatalf("expected 2 fetched comments, got %d", len(allComments))
 	}
 
 	dmn.ProcessOnce()
 
-	call, ok := mr.lastCall()
-	if !ok {
-		t.Fatal("runner was not called")
-	}
-	if call.SessionID != sessionID {
-		t.Errorf("runner session = %q, want %q", call.SessionID, sessionID)
-	}
-
 	allComments, _ = d.ListCommentsByPR(prID)
-	if done := filterByState(allComments, db.CommentStateDone); len(done) != 2 {
-		t.Errorf("expected 2 done comments, got %d", len(done))
+	queued := filterByState(allComments, db.CommentStateQueued)
+	if len(queued) != 2 {
+		t.Errorf("expected 2 queued comments after triage, got %d (states: %v)", len(queued), commentStates(allComments))
 	}
-
-	_ = p
 }
 
 func TestE2E_GitLabHappyPath(t *testing.T) {
@@ -329,26 +277,23 @@ func TestE2E_GitLabHappyPath(t *testing.T) {
 	seedSession(t, d, sessionID, "feature/test")
 	seedPR(t, d, prID, "feature/test", sessionID)
 
-	mr := &e2eRunner{}
 	plats := map[string]platforms.Platform{"gitlab": gitlab_pkg.New("test-token", glURL)}
-	dmn, _ := newDaemon(t, d, plats, mr, true)
+	dmn, _ := newDaemon(t, d, plats)
 
 	must(t, dmn.Start())
 	defer dmn.Stop()
 
 	allComments, _ := d.ListCommentsByPR(prID)
 	if len(filterByState(allComments, db.CommentStateFetched)) != 2 {
-		t.Fatalf("expected 2 fetched comments from GitLab mock")
+		t.Fatalf("expected 2 fetched comments from GitLab mock, got %d", len(allComments))
 	}
 
 	dmn.ProcessOnce()
 
-	call, ok := mr.lastCall()
-	if !ok {
-		t.Fatal("runner was not called")
-	}
-	if call.SessionID != sessionID {
-		t.Errorf("runner session = %q, want %q", call.SessionID, sessionID)
+	allComments, _ = d.ListCommentsByPR(prID)
+	queued := filterByState(allComments, db.CommentStateQueued)
+	if len(queued) != 2 {
+		t.Errorf("expected 2 queued comments after triage, got %d", len(queued))
 	}
 }
 
@@ -383,7 +328,7 @@ func TestE2E_OfflineCatchUp(t *testing.T) {
 	seedPR(t, d, prID, "feature/catchup", sessionID)
 
 	plats := map[string]platforms.Platform{"github": github_pkg.New("test-token", ghURL)}
-	dmn, _ := newDaemon(t, d, plats, &e2eRunner{}, false)
+	dmn, _ := newDaemon(t, d, plats)
 
 	must(t, dmn.Start())
 	defer dmn.Stop()
@@ -392,75 +337,6 @@ func TestE2E_OfflineCatchUp(t *testing.T) {
 	fetched := filterByState(allComments, db.CommentStateFetched)
 	if len(fetched) != 3 {
 		t.Errorf("expected 3 comments fetched on startup catch-up, got %d", len(fetched))
-	}
-}
-
-func TestE2E_SessionMismatch(t *testing.T) {
-	d := openDB(t)
-
-	seedSession(t, d, "sess-a", "feature/issue-a")
-	seedSession(t, d, "sess-c", "feature/issue-c")
-	seedPR(t, d, "github:owner/repo:12", "feature/issue-a", "sess-a")
-	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateFetched, db.VerdictPending)
-	seedComment(t, d, "c2", "github:owner/repo:12", db.CommentStateFetched, db.VerdictPending)
-
-	mr := &e2eRunner{activeSessionID: "sess-c"}
-	dmn, _ := newDaemon(t, d, nil, mr, true)
-
-	must(t, dmn.Start())
-	defer dmn.Stop()
-
-	dmn.ProcessOnce()
-
-	call, ok := mr.lastCall()
-	if !ok {
-		t.Fatal("runner was not called")
-	}
-	if call.SessionID != "sess-a" {
-		t.Errorf("runner session = %q, want sess-a", call.SessionID)
-	}
-
-	if len(mr.calls) != 1 {
-		t.Errorf("runner called %d times, want exactly 1", len(mr.calls))
-	}
-}
-
-func TestE2E_SessionBusyCommentsParked(t *testing.T) {
-	d := openDB(t)
-
-	seedSession(t, d, "sess-a", "feature/issue-a")
-	seedPR(t, d, "github:owner/repo:12", "feature/issue-a", "sess-a")
-	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateFetched, db.VerdictPending)
-
-	mr := &e2eRunner{activeSessionID: "sess-a"}
-	dmn, _ := newDaemon(t, d, nil, mr, true)
-
-	must(t, dmn.Start())
-	defer dmn.Stop()
-
-	dmn.ProcessOnce()
-
-	if _, ok := mr.lastCall(); ok {
-		t.Error("runner should not have been called while session is active")
-	}
-
-	c, _ := d.GetComment("c1")
-	if c == nil || c.State != db.CommentStateParked {
-		t.Errorf("comment state = %q, want parked", stateOrEmpty(c))
-	}
-
-	mr.mu.Lock()
-	mr.activeSessionID = ""
-	mr.mu.Unlock()
-
-	dmn.ProcessOnce()
-
-	call, ok := mr.lastCall()
-	if !ok {
-		t.Fatal("runner was not called after session freed")
-	}
-	if call.SessionID != "sess-a" {
-		t.Errorf("runner session = %q, want sess-a", call.SessionID)
 	}
 }
 
@@ -505,9 +381,42 @@ func TestE2E_DaemonRestartNoCommentsLost(t *testing.T) {
 	}
 }
 
-func stateOrEmpty(c *db.Comment) string {
+func TestE2E_SkipVerdictNotQueued(t *testing.T) {
+	d := openDB(t)
+
+	seedSession(t, d, "sess-a", "feature/a")
+	seedPR(t, d, "github:owner/repo:10", "feature/a", "sess-a")
+	seedComment(t, d, "c1", "github:owner/repo:10", db.CommentStateFetched, db.VerdictPending)
+
+	mt := &e2eTriager{db: d, verdict: db.VerdictSkip}
+	q := queue.New(d)
+	n := notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil })
+	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
+
+	dmn := daemon.New(daemon.Deps{
+		DB:       d,
+		Poller:   nil,
+		Triage:   mt,
+		Queue:    q,
+		Notifier: n,
+	}, pidPath)
+
+	dmn.ProcessOnce()
+
+	c, _ := d.GetComment("c1")
 	if c == nil {
-		return "<nil>"
+		t.Fatal("comment not found")
 	}
-	return c.State
+	if c.State == db.CommentStateQueued {
+		t.Error("skip-verdict comment should not be queued")
+	}
+	_ = stateOrEmpty(c)
+}
+
+func commentStates(comments []*db.Comment) []string {
+	states := make([]string, len(comments))
+	for i, c := range comments {
+		states[i] = c.CommentID + "=" + c.State
+	}
+	return states
 }

@@ -10,42 +10,22 @@ import (
 
 	"github.com/ahmedennaime/reviewbridge/internal/daemon"
 	"github.com/ahmedennaime/reviewbridge/internal/db"
-	"github.com/ahmedennaime/reviewbridge/internal/dialog"
 	"github.com/ahmedennaime/reviewbridge/internal/notify"
 	"github.com/ahmedennaime/reviewbridge/internal/queue"
-	"github.com/ahmedennaime/reviewbridge/internal/runner"
 	"github.com/ahmedennaime/reviewbridge/internal/triage"
 )
 
 type mockPoller struct {
-	started   bool
-	stopped   bool
-	catchUpN  int
+	started  bool
+	stopped  bool
+	catchUpN int
 }
 
-func (m *mockPoller) Start()    { m.started = true }
-func (m *mockPoller) Stop()     { m.stopped = true }
-func (m *mockPoller) CatchUp()  { m.catchUpN++ }
-func (m *mockPoller) Poll()     {}
+func (m *mockPoller) Start()                                        { m.started = true }
+func (m *mockPoller) Stop()                                         { m.stopped = true }
+func (m *mockPoller) CatchUp()                                      { m.catchUpN++ }
+func (m *mockPoller) Poll()                                         {}
 func (m *mockPoller) DiscoverPRs(_ *db.Session, _, _ string) error { return nil }
-
-type mockRunner struct {
-	activeSessionID string
-	runSessionID    string
-	runErr          error
-}
-
-func (m *mockRunner) IsSessionActive(id string) bool {
-	return m.activeSessionID == id
-}
-
-func (m *mockRunner) Run(sessionID, _ string) (*runner.RunResult, error) {
-	m.runSessionID = sessionID
-	if m.runErr != nil {
-		return nil, m.runErr
-	}
-	return &runner.RunResult{Output: "done", CommitHash: "abc1234"}, nil
-}
 
 type mockTriager struct {
 	verdict string
@@ -63,7 +43,7 @@ func (m *mockTriager) Run(comments []*db.Comment, _, _ string) ([]triage.TriageR
 	return results, nil
 }
 
-func newTestEnv(t *testing.T) (*db.DB, *daemon.Daemon, *mockPoller, *mockRunner) {
+func newTestEnv(t *testing.T) (*db.DB, *daemon.Daemon, *mockPoller) {
 	t.Helper()
 	d, err := db.Open(":memory:")
 	if err != nil {
@@ -72,7 +52,6 @@ func newTestEnv(t *testing.T) (*db.DB, *daemon.Daemon, *mockPoller, *mockRunner)
 	t.Cleanup(func() { d.Close() })
 
 	mp := &mockPoller{}
-	mr := &mockRunner{}
 	mt := &mockTriager{verdict: db.VerdictFix}
 	q := queue.New(d)
 	n := notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil })
@@ -85,12 +64,9 @@ func newTestEnv(t *testing.T) (*db.DB, *daemon.Daemon, *mockPoller, *mockRunner)
 		Triage:   mt,
 		Queue:    q,
 		Notifier: n,
-		Runner:   mr,
-	}, pidPath).WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) {
-		return nil, nil
-	})
+	}, pidPath)
 
-	return d, dmn, mp, mr
+	return d, dmn, mp
 }
 
 func seedSession(t *testing.T, d *db.DB, id, branch string) {
@@ -124,7 +100,7 @@ func seedComment(t *testing.T, d *db.DB, id, prID, state string) {
 }
 
 func TestDaemonStartupInitializesDB(t *testing.T) {
-	_, dmn, _, _ := newTestEnv(t)
+	_, dmn, _ := newTestEnv(t)
 	if err := dmn.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -132,7 +108,7 @@ func TestDaemonStartupInitializesDB(t *testing.T) {
 }
 
 func TestDaemonStartupRunsCatchUp(t *testing.T) {
-	_, dmn, mp, _ := newTestEnv(t)
+	_, dmn, mp := newTestEnv(t)
 	if err := dmn.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -152,15 +128,10 @@ func TestDaemonStartupWithCorruptConfig(t *testing.T) {
 
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 
-	nilPoller := &mockPoller{}
-	nilRunner := &mockRunner{}
-	nilTriager := &mockTriager{err: errors.New("no config")}
-
 	dmn := daemon.New(daemon.Deps{
 		DB:     d,
-		Poller: nilPoller,
-		Triage: nilTriager,
-		Runner: nilRunner,
+		Poller: &mockPoller{},
+		Triage: &mockTriager{err: errors.New("no config")},
 		Queue:  queue.New(d),
 		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
 	}, pidPath)
@@ -173,7 +144,6 @@ func TestDaemonStartupWithCorruptConfig(t *testing.T) {
 }
 
 func TestDaemonPIDFileWrittenOnStart(t *testing.T) {
-	_, dmn, _, _ := newTestEnv(t)
 	pidPath := filepath.Join(t.TempDir(), "daemon.pid")
 	d, err := db.Open(":memory:")
 	if err != nil {
@@ -181,17 +151,15 @@ func TestDaemonPIDFileWrittenOnStart(t *testing.T) {
 	}
 	defer d.Close()
 
-	mp := &mockPoller{}
-	dmn2 := daemon.New(daemon.Deps{
+	dmn := daemon.New(daemon.Deps{
 		DB:       d,
-		Poller:   mp,
+		Poller:   &mockPoller{},
 		Triage:   &mockTriager{verdict: db.VerdictFix},
 		Queue:    queue.New(d),
 		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
-		Runner:   &mockRunner{},
-	}, pidPath).WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
+	}, pidPath)
 
-	if err := dmn2.Start(); err != nil {
+	if err := dmn.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
@@ -203,8 +171,7 @@ func TestDaemonPIDFileWrittenOnStart(t *testing.T) {
 	if pid != os.Getpid() {
 		t.Errorf("PID in file = %d, want %d", pid, os.Getpid())
 	}
-	dmn2.Stop()
-	_ = dmn
+	dmn.Stop()
 }
 
 func TestDaemonPIDFileRemovedOnStop(t *testing.T) {
@@ -218,8 +185,7 @@ func TestDaemonPIDFileRemovedOnStop(t *testing.T) {
 		Triage:   &mockTriager{verdict: db.VerdictFix},
 		Queue:    queue.New(d),
 		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
-		Runner:   &mockRunner{},
-	}, pidPath).WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
+	}, pidPath)
 
 	dmn.Start()
 	if _, err := os.Stat(pidPath); os.IsNotExist(err) {
@@ -232,106 +198,28 @@ func TestDaemonPIDFileRemovedOnStop(t *testing.T) {
 	}
 }
 
-func TestDaemonRoutesToCorrectSession(t *testing.T) {
-	d, _, _, mr := newTestEnv(t)
-
-	seedSession(t, d, "s-a", "feature/a")
-	seedSession(t, d, "s-b", "feature/b")
-	seedPR(t, d, "github:owner/repo:12", "feature/a", "s-a")
-	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateTriaged)
-	d.SetTriageResult("c1", db.VerdictFix)
-	d.UpdateCommentState("c1", db.CommentStateQueued)
-
-	pr, _ := d.GetPullRequest("github:owner/repo:12")
-	c1, _ := d.GetComment("c1")
-
-	q := queue.New(d)
-	n := notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil })
-
-	dmn := daemon.New(daemon.Deps{
-		DB:       d,
-		Poller:   &mockPoller{},
-		Triage:   &mockTriager{verdict: db.VerdictFix},
-		Queue:    q,
-		Notifier: n,
-		Runner:   mr,
-	}, filepath.Join(t.TempDir(), "daemon.pid")).
-		WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
-
-	dmn.RouteComments([]*db.Comment{c1}, pr)
-
-	if mr.runSessionID != "s-a" {
-		t.Errorf("runner called with session %q, want s-a", mr.runSessionID)
-	}
-}
-
-func TestDaemonParksWhenSessionActive(t *testing.T) {
-	d, _, _, _ := newTestEnv(t)
+func TestDaemonFlushPendingResetsStuckStates(t *testing.T) {
+	d, dmn, _ := newTestEnv(t)
 
 	seedSession(t, d, "s-a", "feature/a")
 	seedPR(t, d, "github:owner/repo:12", "feature/a", "s-a")
-	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateQueued)
+	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateStaleSession)
+	seedComment(t, d, "c2", "github:owner/repo:12", db.CommentStateInProgress)
 
-	mr := &mockRunner{activeSessionID: "s-a"}
-	q := queue.New(d)
+	if err := dmn.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
 
-	dmn := daemon.New(daemon.Deps{
-		DB:       d,
-		Poller:   &mockPoller{},
-		Triage:   &mockTriager{verdict: db.VerdictFix},
-		Queue:    q,
-		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
-		Runner:   mr,
-	}, filepath.Join(t.TempDir(), "daemon.pid")).
-		WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
-
-	pr, _ := d.GetPullRequest("github:owner/repo:12")
 	c1, _ := d.GetComment("c1")
-
-	dmn.RouteComments([]*db.Comment{c1}, pr)
-
-	if mr.runSessionID != "" {
-		t.Error("runner should not have been called when session is active")
+	c2, _ := d.GetComment("c2")
+	if c1 == nil || c1.State != db.CommentStateQueued {
+		t.Errorf("c1 state = %q, want queued", c1.State)
+	}
+	if c2 == nil || c2.State != db.CommentStateQueued {
+		t.Errorf("c2 state = %q, want queued", c2.State)
 	}
 
-	c1After, _ := d.GetComment("c1")
-	if c1After.State != db.CommentStateParked {
-		t.Errorf("state = %q, want parked", c1After.State)
-	}
-}
-
-func TestDaemonUnparksWhenSessionFrees(t *testing.T) {
-	d, _, _, _ := newTestEnv(t)
-
-	seedSession(t, d, "s-a", "feature/a")
-	seedPR(t, d, "github:owner/repo:12", "feature/a", "s-a")
-	seedComment(t, d, "c1", "github:owner/repo:12", db.CommentStateParked)
-
-	mr := &mockRunner{}
-	q := queue.New(d)
-
-	if err := q.Unpark("feature/a"); err != nil {
-		t.Fatalf("Unpark: %v", err)
-	}
-
-	pr, _ := d.GetPullRequest("github:owner/repo:12")
-	c1, _ := d.GetComment("c1")
-
-	dmn := daemon.New(daemon.Deps{
-		DB:       d,
-		Poller:   &mockPoller{},
-		Triage:   &mockTriager{verdict: db.VerdictFix},
-		Queue:    q,
-		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
-		Runner:   mr,
-	}, filepath.Join(t.TempDir(), "daemon.pid")).
-		WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
-
-	dmn.RouteComments([]*db.Comment{c1}, pr)
-
-	if mr.runSessionID != "s-a" {
-		t.Errorf("runner called with %q after unpark, want s-a", mr.runSessionID)
-	}
+	dmn.Stop()
 }
 
 func TestDaemonShutdownOnSIGINT(t *testing.T) {
@@ -345,8 +233,7 @@ func TestDaemonShutdownOnSIGINT(t *testing.T) {
 		Triage:   &mockTriager{verdict: db.VerdictFix},
 		Queue:    queue.New(d),
 		Notifier: notify.New().WithNotifyFn(func(_, _ string, _ any) error { return nil }),
-		Runner:   &mockRunner{},
-	}, pidPath).WithShowDialog(func(_ []dialog.DialogItem) ([]string, error) { return nil, nil })
+	}, pidPath)
 
 	if err := dmn.Start(); err != nil {
 		t.Fatalf("Start: %v", err)

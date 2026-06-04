@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/ahmedennaime/reviewbridge/internal/config"
 	"github.com/ahmedennaime/reviewbridge/internal/daemon"
 	"github.com/ahmedennaime/reviewbridge/internal/db"
-	"github.com/ahmedennaime/reviewbridge/internal/dialog"
 	"github.com/ahmedennaime/reviewbridge/internal/notify"
 	"github.com/ahmedennaime/reviewbridge/internal/platforms"
 	github_pkg "github.com/ahmedennaime/reviewbridge/internal/platforms/github"
@@ -23,7 +21,6 @@ import (
 	"github.com/ahmedennaime/reviewbridge/internal/poller"
 	"github.com/ahmedennaime/reviewbridge/internal/queue"
 	"github.com/ahmedennaime/reviewbridge/internal/queuefile"
-	"github.com/ahmedennaime/reviewbridge/internal/runner"
 	"github.com/ahmedennaime/reviewbridge/internal/session"
 	"github.com/ahmedennaime/reviewbridge/internal/triage"
 )
@@ -100,13 +97,6 @@ func defaultSpawner() func() error {
 	}
 }
 
-func stdinIsTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
 
 func runStop(out io.Writer, pidPath string) error {
 	pid, err := readPID(pidPath)
@@ -160,15 +150,10 @@ func runDaemon(configPath, dbPath, pidPath string) error {
 
 	plats := buildPlatforms(cfg)
 	qfw := queuefile.New(expandHomePath(config.QueueDir()), d)
-	q := queue.New(d).WithOnChange(func(ids []string) {
-		for _, id := range ids {
-			qfw.SyncForComment(id) //nolint:errcheck
-		}
-	})
+	q := queue.New(d)
 	p := poller.New(d, plats, interval)
 	t := triage.New(cfg.AnthropicAPIKey, d)
 	n := notify.New()
-	r := runner.New()
 	reg := session.NewRegistry(d)
 
 	sessionsPath := expandHomePath(cfg.ClaudeCode.SessionsPath)
@@ -178,30 +163,14 @@ func runDaemon(configPath, dbPath, pidPath string) error {
 		Poller:       p,
 		Triage:       t,
 		Queue:        q,
+		QueueWriter:  qfw,
 		Notifier:     n,
-		Runner:       r,
 		Registry:     reg,
 		Platforms:    plats,
 		SessionsPath: sessionsPath,
 	}
 
 	dm := daemon.New(deps, pidPath)
-
-	if !stdinIsTTY() {
-		log.Printf("[daemon] no tty detected — running headless (fix-verdict comments auto-approved)")
-		dm.WithShowDialog(func(items []dialog.DialogItem) ([]string, error) {
-			var approved []string
-			for _, item := range items {
-				if item.Verdict == db.VerdictFix {
-					approved = append(approved, item.CommentID)
-				}
-			}
-			log.Printf("[daemon] headless auto-approved %d fix comment(s), %d your-call/skip parked",
-				len(approved), len(items)-len(approved))
-			return approved, nil
-		})
-	}
-
 	return dm.Run()
 }
 

@@ -35,11 +35,23 @@ func (d *DB) GetSession(sessionID string) (*Session, error) {
 func (d *DB) GetSessionByBranch(branchName string) (*Session, error) {
 	row := d.sql.QueryRow(
 		`SELECT session_id, repo_path, branch_name, last_active_at, status
-		 FROM sessions WHERE branch_name = ?
+		 FROM sessions WHERE branch_name = ? AND status != ?
 		 ORDER BY last_active_at DESC LIMIT 1`,
-		branchName,
+		branchName, SessionStatusClosed,
 	)
 	return scanSession(row)
+}
+
+
+func (d *DB) TouchSession(sessionID string) error {
+	res, err := d.sql.Exec(
+		`UPDATE sessions SET last_active_at = ? WHERE session_id = ?`,
+		timeToStr(time.Now()), sessionID,
+	)
+	if err != nil {
+		return err
+	}
+	return expectOneRow(res, sessionID)
 }
 
 func (d *DB) ListActiveSessions() ([]*Session, error) {

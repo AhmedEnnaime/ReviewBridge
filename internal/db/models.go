@@ -14,9 +14,10 @@ const (
 	CommentStateFetched    = "fetched"
 	CommentStateTriaged    = "triaged"
 	CommentStateQueued     = "queued"
-	CommentStateParked     = "parked"
-	CommentStateInProgress = "in_progress"
-	CommentStateDone       = "done"
+	CommentStateParked       = "parked"
+	CommentStateStaleSession = "stale_session"
+	CommentStateInProgress   = "in_progress"
+	CommentStateDone         = "done"
 
 	VerdictFix      = "fix"
 	VerdictYourCall = "your-call"

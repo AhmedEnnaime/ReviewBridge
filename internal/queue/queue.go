@@ -60,6 +60,16 @@ func (q *Queue) Park(commentIDs []string) error {
 	return nil
 }
 
+func (q *Queue) ParkStale(commentIDs []string) error {
+	for _, id := range commentIDs {
+		if err := q.db.UpdateCommentState(id, db.CommentStateStaleSession); err != nil {
+			return err
+		}
+	}
+	q.notifyChange(commentIDs)
+	return nil
+}
+
 func (q *Queue) Unpark(branchName string) error {
 	parked, err := q.db.ListCommentsByStateAndBranch(db.CommentStateParked, branchName)
 	if err != nil {

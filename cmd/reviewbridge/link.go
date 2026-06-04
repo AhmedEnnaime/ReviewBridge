@@ -28,11 +28,19 @@ func runLink(out io.Writer, database *db.DB, sessionID, branch, prID string) err
 		if err := database.SaveSession(s); err != nil {
 			return fmt.Errorf("failed to update session: %w", err)
 		}
+		database.TouchSession(sessionID) //nolint:errcheck
 		prs, _ := database.ListOpenPullRequests()
 		for _, pr := range prs {
 			if pr.BranchName == branch {
 				database.LinkPRToSession(pr.PRID, sessionID) //nolint:errcheck
 			}
+		}
+		stale, _ := database.ListCommentsByStateAndBranch(db.CommentStateStaleSession, branch)
+		for _, c := range stale {
+			database.UpdateCommentState(c.CommentID, db.CommentStateQueued) //nolint:errcheck
+		}
+		if len(stale) > 0 {
+			fmt.Fprintf(out, "Re-queued %d stale comment(s) for branch %s\n", len(stale), branch)
 		}
 		fmt.Fprintf(out, "Session %s linked to branch %s\n", sessionID, branch)
 	}

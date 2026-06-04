@@ -59,12 +59,41 @@ func (p *Poller) CatchUp() {
 }
 
 func (p *Poller) Poll() {
+	p.rediscoverPRs()
+
 	prs, err := p.db.ListOpenPullRequests()
 	if err != nil {
+		log.Printf("[poller] list open PRs failed: %v", err)
 		return
 	}
 	for _, pr := range prs {
 		p.pollPR(pr)
+	}
+}
+
+func (p *Poller) rediscoverPRs() {
+	sessions, err := p.db.ListActiveSessions()
+	if err != nil {
+		return
+	}
+
+	prs, _ := p.db.ListOpenPullRequests()
+	linked := make(map[string]bool, len(prs))
+	for _, pr := range prs {
+		if pr.SessionID != nil {
+			linked[*pr.SessionID] = true
+		}
+	}
+
+	for _, s := range sessions {
+		if linked[s.SessionID] || s.BranchName == "" || s.RepoPath == "" {
+			continue
+		}
+		platformName, repo, err := ParseRemote(s.RepoPath)
+		if err != nil {
+			continue
+		}
+		p.DiscoverPRs(s, platformName, repo) //nolint:errcheck
 	}
 }
 
@@ -78,7 +107,6 @@ func (p *Poller) DiscoverPRs(session *db.Session, platformName, repo string) err
 		log.Printf("[poller] list PRs failed for %s/%s: %v", platformName, repo, err)
 		return err
 	}
-	now := time.Now()
 	for _, pr := range openPRs {
 		if pr.SourceBranch != session.BranchName {
 			continue
@@ -94,7 +122,7 @@ func (p *Poller) DiscoverPRs(session *db.Session, platformName, repo string) err
 			Repo:          repo,
 			BranchName:    pr.SourceBranch,
 			SessionID:     &sid,
-			LastCheckedAt: now,
+			LastCheckedAt: time.Unix(0, 0),
 			Status:        db.PRStatusOpen,
 		})
 		log.Printf("[poller] discovered PR %s for branch=%s", prID, pr.SourceBranch)
