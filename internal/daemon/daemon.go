@@ -87,7 +87,7 @@ func (d *Daemon) Stop() {
 	}
 	d.deps.Poller.Stop()
 	if d.deps.Registry != nil {
-		d.deps.Registry.Stop()
+		d.deps.Registry.Stop() //nolint:errcheck
 	}
 	removePID(d.pidPath)
 	if d.deps.DB != nil {

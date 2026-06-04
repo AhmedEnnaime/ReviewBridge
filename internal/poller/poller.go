@@ -153,7 +153,7 @@ func (p *Poller) pollPR(pr *db.PullRequest) {
 		if existing, _ := p.db.GetComment(dbID); existing != nil {
 			continue
 		}
-		p.db.SaveComment(&db.Comment{
+		p.db.SaveComment(&db.Comment{ //nolint:errcheck
 			CommentID:     dbID,
 			PRID:          pr.PRID,
 			Author:        c.Author,
@@ -166,7 +166,7 @@ func (p *Poller) pollPR(pr *db.PullRequest) {
 			State:         db.CommentStateFetched,
 		})
 	}
-	p.db.UpdateLastChecked(pr.PRID, now)
+	p.db.UpdateLastChecked(pr.PRID, now) //nolint:errcheck
 }
 
 func buildPRID(platform, repo string, number int) string {

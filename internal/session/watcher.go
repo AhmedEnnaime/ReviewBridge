@@ -41,7 +41,7 @@ func (w *Watcher) Watch(dir string) error {
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			w.fsw.Add(filepath.Join(dir, entry.Name()))
+			w.fsw.Add(filepath.Join(dir, entry.Name())) //nolint:errcheck
 		}
 	}
 	return nil
@@ -67,7 +67,7 @@ func (w *Watcher) loop() {
 					continue
 				}
 				if info.IsDir() {
-					w.fsw.Add(event.Name)
+					w.fsw.Add(event.Name) //nolint:errcheck
 					continue
 				}
 				if strings.HasSuffix(event.Name, ".jsonl") {

@@ -58,7 +58,7 @@ func (d *DB) Close() error {
 
 func (d *DB) TableExists(name string) bool {
 	var count int
-	d.sql.QueryRow(
+	_ = d.sql.QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
 		name,
 	).Scan(&count)

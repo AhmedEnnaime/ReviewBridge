@@ -173,11 +173,7 @@ func parseResponse(text string) ([]TriageResult, error) {
 		if !isValidVerdict(r.Verdict) {
 			r.Verdict = db.VerdictYourCall
 		}
-		results = append(results, TriageResult{
-			CommentID: r.CommentID,
-			Verdict:   r.Verdict,
-			Reason:    r.Reason,
-		})
+		results = append(results, TriageResult(r))
 	}
 	return results, nil
 }
