@@ -90,7 +90,8 @@ flowchart TD
 
 ## Features
 
-- **Works with any reviewer** — humans, Copilot, CodeRabbit, any bot that leaves PR comments
+- **Works with any reviewer** — humans, Copilot, CodeRabbit, any bot that leaves inline code review comments
+- **Code review comments only** — ReviewBridge watches comments attached to specific lines of code (GitHub's pull request review comments). General PR conversation comments are intentionally ignored — they have no file/line context for Claude to act on
 - **No session conflicts** — never hijacks your active Claude Code session; the `/check-reviews` skill runs inside it on your terms
 - **Triage first** — Claude pre-evaluates every comment before you see it; junk and style nits are silently dropped
 - **Offline-safe** — daemon catches up on all missed comments on restart
