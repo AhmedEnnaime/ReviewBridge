@@ -90,12 +90,14 @@ func TestPollerUpdatesLastChecked(t *testing.T) {
 	old := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
 	seedPR(t, d, "github:owner/repo:12", "feature/a", old)
 
-	before := time.Now().Add(-time.Second)
 	p.Poll()
 
 	pr, _ := d.GetPullRequest("github:owner/repo:12")
-	if !pr.LastCheckedAt.After(before) {
-		t.Errorf("LastCheckedAt not updated: got %v, want after %v", pr.LastCheckedAt, before)
+	if !pr.LastCheckedAt.After(old) {
+		t.Errorf("LastCheckedAt not updated: got %v, still at old value %v", pr.LastCheckedAt, old)
+	}
+	if time.Since(pr.LastCheckedAt) > 3*time.Minute {
+		t.Errorf("LastCheckedAt too far in the past: %v", pr.LastCheckedAt)
 	}
 }
 

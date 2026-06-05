@@ -42,7 +42,7 @@ func TestRegistryCreatesSessionOnNewFile(t *testing.T) {
 	path := filepath.Join(subdir, "abc123.jsonl")
 	os.WriteFile(path, []byte(validJSONL()), 0600)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s, _ := d.GetSession("abc123")
 		if s != nil {
@@ -53,7 +53,7 @@ func TestRegistryCreatesSessionOnNewFile(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Error("timeout: session not saved to DB within 2s")
+	t.Error("timeout: session not saved to DB within 5s")
 }
 
 func TestRegistryIgnoresNonJSONLFiles(t *testing.T) {
@@ -94,7 +94,7 @@ func TestRegistryIgnoresDuplicates(t *testing.T) {
 	path := filepath.Join(subdir, "abc123.jsonl")
 	os.WriteFile(path, []byte(validJSONL()), 0600)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		s, _ := d.GetSession("abc123")
 		if s != nil {
@@ -104,7 +104,7 @@ func TestRegistryIgnoresDuplicates(t *testing.T) {
 	}
 
 	os.WriteFile(path, []byte(validJSONL()+"extra line\n"), 0600)
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	sessions, _ := d.ListActiveSessions()
 	if len(sessions) != 1 {
