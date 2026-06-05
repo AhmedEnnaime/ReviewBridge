@@ -83,6 +83,9 @@ func TestRegistryIgnoresDuplicates(t *testing.T) {
 	subdir := filepath.Join(dir, "myproject")
 	os.MkdirAll(subdir, 0755)
 
+	path := filepath.Join(subdir, "abc123.jsonl")
+	os.WriteFile(path, []byte(validJSONL()), 0600)
+
 	r, d := newTestRegistry(t, func(string) (string, error) {
 		return "main", nil
 	})
@@ -91,16 +94,9 @@ func TestRegistryIgnoresDuplicates(t *testing.T) {
 	}
 	defer r.Stop()
 
-	path := filepath.Join(subdir, "abc123.jsonl")
-	os.WriteFile(path, []byte(validJSONL()), 0600)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		s, _ := d.GetSession("abc123")
-		if s != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	s, _ := d.GetSession("abc123")
+	if s == nil {
+		t.Fatal("session not created by scanExisting")
 	}
 
 	os.WriteFile(path, []byte(validJSONL()+"extra line\n"), 0600)
@@ -110,4 +106,38 @@ func TestRegistryIgnoresDuplicates(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Errorf("got %d sessions after duplicate write, want 1", len(sessions))
 	}
+}
+
+func TestRegistryUpdatesIncompleteSession(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "myproject")
+	os.MkdirAll(subdir, 0755)
+
+	r, d := newTestRegistry(t, func(string) (string, error) {
+		return "feature/xyz", nil
+	})
+
+	d.SaveSession(&db.Session{ //nolint:errcheck
+		SessionID:  "abc123",
+		RepoPath:   "",
+		BranchName: "",
+		Status:     db.SessionStatusActive,
+	})
+
+	if err := r.Start(dir); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer r.Stop()
+
+	os.WriteFile(filepath.Join(subdir, "abc123.jsonl"), []byte(validJSONL()), 0600)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s, _ := d.GetSession("abc123")
+		if s != nil && s.BranchName == "feature/xyz" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Error("timeout: incomplete session not updated within 5s")
 }

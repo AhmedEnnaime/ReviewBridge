@@ -58,13 +58,17 @@ func (r *Registry) handleNewSession(path string) {
 	}
 
 	existing, _ := r.db.GetSession(meta.SessionID)
-	if existing != nil {
+	if existing != nil && existing.RepoPath != "" && existing.BranchName != "" {
 		return
 	}
 
 	branch := ""
 	if meta.RepoPath != "" {
 		branch, _ = r.getBranch(meta.RepoPath)
+	}
+
+	if meta.RepoPath == "" || branch == "" {
+		return
 	}
 
 	createdAt := meta.CreatedAt

@@ -61,23 +61,27 @@ func (w *Watcher) loop() {
 			if !ok {
 				return
 			}
-			if event.Has(fsnotify.Create) {
-				info, err := os.Stat(event.Name)
-				if err != nil {
-					continue
-				}
-				if info.IsDir() {
-					w.fsw.Add(event.Name) //nolint:errcheck
-					continue
-				}
-				if strings.HasSuffix(event.Name, ".jsonl") {
-					w.onSession(event.Name)
-				}
-			}
+			w.handleEvent(event)
 		case _, ok := <-w.fsw.Errors:
 			if !ok {
 				return
 			}
 		}
+	}
+}
+
+func (w *Watcher) handleEvent(event fsnotify.Event) {
+	if event.Has(fsnotify.Create) {
+		info, err := os.Stat(event.Name)
+		if err != nil {
+			return
+		}
+		if info.IsDir() {
+			w.fsw.Add(event.Name) //nolint:errcheck
+			return
+		}
+	}
+	if (event.Has(fsnotify.Create) || event.Has(fsnotify.Write)) && strings.HasSuffix(event.Name, ".jsonl") {
+		w.onSession(event.Name)
 	}
 }
