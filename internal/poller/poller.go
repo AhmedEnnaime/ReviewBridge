@@ -166,7 +166,7 @@ func (p *Poller) pollPR(pr *db.PullRequest) {
 			State:         db.CommentStateFetched,
 		})
 	}
-	p.db.UpdateLastChecked(pr.PRID, now) //nolint:errcheck
+	p.db.UpdateLastChecked(pr.PRID, now.Add(-2*time.Minute)) //nolint:errcheck
 }
 
 func buildPRID(platform, repo string, number int) string {
