@@ -62,11 +62,10 @@ release:
 	@for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do \
 	  OS=$$(echo $$platform | cut -d/ -f1); \
 	  ARCH=$$(echo $$platform | cut -d/ -f2); \
-	  echo "Building $$OS/$$ARCH..."; \
-	  docker build -f Dockerfile.build \
-	    --build-arg TARGETOS=$$OS \
-	    --build-arg TARGETARCH=$$ARCH \
-	    -o $(DIST_DIR)/$(BINARY_NAME)-$$OS-$$ARCH . ; \
+	  OUT=$(DIST_DIR)/$(BINARY_NAME)-$$OS-$$ARCH; \
+	  echo "Building $$OS/$$ARCH -> $$OUT"; \
+	  CGO_ENABLED=0 GOOS=$$OS GOARCH=$$ARCH \
+	  go build $(LDFLAGS) -o $$OUT $(CMD_PATH); \
 	done
 
 dev:
