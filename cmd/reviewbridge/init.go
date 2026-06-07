@@ -38,11 +38,12 @@ func (p *stdinPrompter) prompt(label string) (string, error) {
 type initValidators struct {
 	anthropic *http.Client
 	github    *http.Client
+	gitlab    *http.Client
 }
 
 func defaultInitValidators() initValidators {
 	c := &http.Client{Timeout: 10 * time.Second}
-	return initValidators{anthropic: c, github: c}
+	return initValidators{anthropic: c, github: c, gitlab: c}
 }
 
 func validateAnthropicKey(client *http.Client, key string) error {
@@ -64,6 +65,23 @@ func validateAnthropicKey(client *http.Client, key string) error {
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	return fmt.Errorf("Anthropic API returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+}
+
+func validateGitLabToken(client *http.Client, token string) error {
+	req, err := http.NewRequest("GET", "https://gitlab.com/api/v4/user", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach GitLab API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("invalid GitLab token")
+	}
+	return nil
 }
 
 func validateGitHubToken(client *http.Client, token string) error {
@@ -113,7 +131,7 @@ func (r *initRunner) run() error {
 
 	var githubToken string
 	for {
-		token, err := r.prompter.prompt("GitHub token (for reading PR comments)")
+		token, err := r.prompter.prompt("GitHub token (optional if using GitLab, press Enter to skip)")
 		if err != nil {
 			return err
 		}
@@ -129,9 +147,22 @@ func (r *initRunner) run() error {
 		break
 	}
 
-	gitlabToken, err := r.prompter.prompt("GitLab token (optional, press Enter to skip)")
-	if err != nil && err != io.EOF {
-		return err
+	var gitlabToken string
+	for {
+		token, err := r.prompter.prompt("GitLab token (optional if using GitHub, press Enter to skip)")
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if token == "" {
+			break
+		}
+		fmt.Fprintln(r.out, "Validating GitLab token...")
+		if err := validateGitLabToken(r.validators.gitlab, token); err != nil {
+			fmt.Fprintf(r.out, "Error: %v\n", err)
+			continue
+		}
+		gitlabToken = token
+		break
 	}
 
 	if githubToken == "" && gitlabToken == "" {

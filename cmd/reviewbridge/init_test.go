@@ -23,16 +23,18 @@ func (m *mockPrompter) prompt(_ string) (string, error) {
 	return r, nil
 }
 
-func TestInitWritesConfigFile(t *testing.T) {
-	anthropicSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newOKServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer anthropicSrv.Close()
+	t.Cleanup(s.Close)
+	return s
+}
 
-	githubSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer githubSrv.Close()
+func TestInitWritesConfigFile(t *testing.T) {
+	anthropicSrv := newOKServer(t)
+	githubSrv := newOKServer(t)
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
@@ -42,6 +44,7 @@ func TestInitWritesConfigFile(t *testing.T) {
 		validators: initValidators{
 			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
 			github:    &http.Client{Transport: redirectTo(githubSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(githubSrv.URL)},
 		},
 		configPath: cfgPath,
 		out:        &strings.Builder{},
@@ -90,6 +93,7 @@ func TestInitValidatesAnthropicKey(t *testing.T) {
 		validators: initValidators{
 			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
 			github:    &http.Client{Transport: redirectTo(githubSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(githubSrv.URL)},
 		},
 		configPath: filepath.Join(dir, "config.yaml"),
 		out:        &out,
@@ -132,6 +136,7 @@ func TestInitValidatesGitHubToken(t *testing.T) {
 		validators: initValidators{
 			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
 			github:    &http.Client{Transport: redirectTo(githubSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(githubSrv.URL)},
 		},
 		configPath: filepath.Join(dir, "config.yaml"),
 		out:        &out,
@@ -165,6 +170,7 @@ func TestInitSkipsGitLabIfEmpty(t *testing.T) {
 		validators: initValidators{
 			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
 			github:    &http.Client{Transport: redirectTo(githubSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(githubSrv.URL)},
 		},
 		configPath: cfgPath,
 		out:        &strings.Builder{},
@@ -177,6 +183,95 @@ func TestInitSkipsGitLabIfEmpty(t *testing.T) {
 	data, _ := os.ReadFile(cfgPath)
 	if strings.Contains(string(data), "gitlab:") {
 		t.Error("config should not contain GitLab section when token is empty")
+	}
+}
+
+func TestInitValidatesGitLabToken(t *testing.T) {
+	anthropicSrv := newOKServer(t)
+	githubSrv := newOKServer(t)
+
+	gitlabCalls := 0
+	gitlabSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gitlabCalls++
+		if gitlabCalls == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gitlabSrv.Close()
+
+	dir := t.TempDir()
+	var out strings.Builder
+
+	runner := &initRunner{
+		prompter: &mockPrompter{responses: []string{"sk-ant-key", "ghp_token", "bad-gitlab", "good-gitlab"}},
+		validators: initValidators{
+			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+			github:    &http.Client{Transport: redirectTo(githubSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(gitlabSrv.URL)},
+		},
+		configPath: filepath.Join(dir, "config.yaml"),
+		out:        &out,
+	}
+
+	if err := runner.run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "Error:") {
+		t.Error("expected error message for invalid GitLab token")
+	}
+	if gitlabCalls < 2 {
+		t.Error("expected GitLab API to be called at least twice (retry after failure)")
+	}
+}
+
+func TestInitGitLabOnly(t *testing.T) {
+	anthropicSrv := newOKServer(t)
+	gitlabSrv := newOKServer(t)
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	runner := &initRunner{
+		prompter: &mockPrompter{responses: []string{"sk-ant-key", "", "glpat_token"}},
+		validators: initValidators{
+			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+			github:    &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(gitlabSrv.URL)},
+		},
+		configPath: cfgPath,
+		out:        &strings.Builder{},
+	}
+
+	if err := runner.run(); err != nil {
+		t.Fatalf("GitLab-only init should succeed: %v", err)
+	}
+
+	data, _ := os.ReadFile(cfgPath)
+	content := string(data)
+	if !strings.Contains(content, "glpat_token") {
+		t.Error("config missing GitLab token")
+	}
+}
+
+func TestInitRequiresAtLeastOnePlatformToken(t *testing.T) {
+	anthropicSrv := newOKServer(t)
+
+	runner := &initRunner{
+		prompter: &mockPrompter{responses: []string{"sk-ant-key", "", ""}},
+		validators: initValidators{
+			anthropic: &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+			github:    &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+			gitlab:    &http.Client{Transport: redirectTo(anthropicSrv.URL)},
+		},
+		configPath: filepath.Join(t.TempDir(), "config.yaml"),
+		out:        &strings.Builder{},
+	}
+
+	if err := runner.run(); err == nil {
+		t.Error("expected error when no platform token provided")
 	}
 }
 
