@@ -106,42 +106,35 @@ flowchart TD
 ### macOS
 
 ```bash
-brew install reviewbridge
+brew install ahmedennaime/reviewbridge/reviewbridge
 ```
+
+Homebrew will tap the formula automatically. No separate `brew tap` step needed.
 
 ### Linux
 
-Download the pre-built binary:
-
 ```bash
-# Replace X.Y.Z with the latest version from the Releases page
-curl -L https://github.com/ahmedennaime/reviewbridge/releases/latest/download/reviewbridge-linux-amd64.tar.gz | tar xz
+# Intel / AMD
+curl -L https://github.com/AhmedEnnaime/ReviewBridge/releases/latest/download/reviewbridge-linux-amd64 -o reviewbridge
+# ARM
+curl -L https://github.com/AhmedEnnaime/ReviewBridge/releases/latest/download/reviewbridge-linux-arm64 -o reviewbridge
+
+chmod +x reviewbridge
 sudo mv reviewbridge /usr/local/bin/
-```
-
-Or with Go:
-
-```bash
-go install github.com/ahmedennaime/reviewbridge/cmd/reviewbridge@latest
 ```
 
 Desktop notifications on Linux require `notify-send`:
 ```bash
-# Debian / Ubuntu
-sudo apt install libnotify-bin
-
-# Arch
-sudo pacman -S libnotify
-
-# Fedora
-sudo dnf install libnotify
+sudo apt install libnotify-bin   # Debian / Ubuntu
+sudo pacman -S libnotify         # Arch
+sudo dnf install libnotify       # Fedora
 ```
 
 ### From Source
 
 ```bash
-git clone https://github.com/ahmedennaime/reviewbridge
-cd reviewbridge
+git clone https://github.com/AhmedEnnaime/ReviewBridge
+cd ReviewBridge
 make build
 sudo cp bin/reviewbridge /usr/local/bin/
 ```
